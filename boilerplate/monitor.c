@@ -27,6 +27,9 @@
 #include <linux/version.h>
 
 #include "monitor_ioctl.h"
+#include <linux/slab.h>     // for kmalloc, kfree
+#include <linux/list.h>     // for linked list
+#include <linux/mutex.h>    // for mutex
 
 #define DEVICE_NAME "container_monitor"
 #define CHECK_INTERVAL_SEC 1
@@ -58,7 +61,12 @@ static struct timer_list monitor_timer;
 static dev_t dev_num;
 static struct cdev c_dev;
 static struct class *cl;
-
+struct proc_entry {
+    pid_t pid;
+    struct list_head list;
+};
+static LIST_HEAD(proc_list);       // head of linked list
+static DEFINE_MUTEX(proc_mutex);  // protects list
 /* ---------------------------------------------------------------
  * Provided: RSS Helper
  *
@@ -205,6 +213,36 @@ static struct file_operations fops = {
     .unlocked_ioctl = monitor_ioctl,
 };
 
+void add_pid(pid_t pid) {
+    struct proc_entry *entry;
+
+    entry = kmalloc(sizeof(*entry), GFP_KERNEL);
+    if (!entry) {
+        printk(KERN_ERR "Failed to allocate memory\n");
+        return;
+    }
+
+    entry->pid = pid;
+
+    mutex_lock(&proc_mutex);
+    list_add(&entry->list, &proc_list);
+    mutex_unlock(&proc_mutex);
+
+    printk(KERN_INFO "Added PID: %d\n", pid);
+}
+
+void print_list(void) {
+    struct proc_entry *entry;
+
+    mutex_lock(&proc_mutex);
+
+    list_for_each_entry(entry, &proc_list, list) {
+        printk(KERN_INFO "Tracked PID: %d\n", entry->pid);
+    }
+
+    mutex_unlock(&proc_mutex);
+}
+
 /* --- Provided: Module Init --- */
 static int __init monitor_init(void)
 {
@@ -234,6 +272,13 @@ static int __init monitor_init(void)
         unregister_chrdev_region(dev_num, 1);
         return -1;
     }
+    printk(KERN_INFO "Monitor module loaded\n");
+
+// TEMP TEST DATA
+add_pid(1234);
+add_pid(5678);
+
+print_list();
 
     timer_setup(&monitor_timer, timer_callback, 0);
     mod_timer(&monitor_timer, jiffies + CHECK_INTERVAL_SEC * HZ);
@@ -259,6 +304,20 @@ static void __exit monitor_exit(void)
     device_destroy(cl, dev_num);
     class_destroy(cl);
     unregister_chrdev_region(dev_num, 1);
+    
+    struct proc_entry *entry, *tmp;
+
+mutex_lock(&proc_mutex);
+
+list_for_each_entry_safe(entry, tmp, &proc_list, list) {
+    printk(KERN_INFO "Removing PID: %d\n", entry->pid);
+    list_del(&entry->list);
+    kfree(entry);
+}
+
+mutex_unlock(&proc_mutex);
+
+printk(KERN_INFO "Monitor module unloaded\n");
 
     printk(KERN_INFO "[container_monitor] Module unloaded.\n");
 }
