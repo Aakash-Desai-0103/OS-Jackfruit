@@ -74,6 +74,16 @@ pid_t start_container(char *id, char *rootfs) {
 
     return pid;
 }
+void list_containers() {
+    printf("ID\tPID\tSTATE\n");
+
+    for (int i = 0; i < container_count; i++) {
+        printf("%s\t%d\t%s\n",
+            containers[i].id,
+            containers[i].pid,
+            containers[i].running ? "running" : "stopped");
+    }
+}
 int main(int argc, char *argv[]) {
 
     if (argc < 2) {
@@ -122,6 +132,24 @@ int main(int argc, char *argv[]) {
 
             printf("[Supervisor] Received: %s\n", buffer);
 
+// -------- START COMMAND --------
+if (strncmp(buffer, "start", 5) == 0) {
+
+    char id[32], rootfs[128], cmd[128];
+
+    sscanf(buffer, "start %s %s %s", id, rootfs, cmd);
+
+    printf("[Supervisor] Starting container %s...\n", id);
+
+    start_container(id, rootfs);
+}
+
+// -------- PS COMMAND --------
+else if (strncmp(buffer, "ps", 2) == 0) {
+    printf("[Supervisor] Listing containers:\n");
+    list_containers();
+}
+
             close(client_fd);
         }
     }
@@ -139,6 +167,23 @@ int main(int argc, char *argv[]) {
             perror("connect");
             return 1;
         }
+else if (strcmp(argv[1], "ps") == 0) {
+
+    int sock = socket(AF_UNIX, SOCK_STREAM, 0);
+
+    struct sockaddr_un addr;
+    addr.sun_family = AF_UNIX;
+    strcpy(addr.sun_path, SOCKET_PATH);
+
+    if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        perror("connect");
+        return 1;
+    }
+
+    write(sock, "ps", 2);
+
+    close(sock);
+}
 
         char buffer[256];
         snprintf(buffer, sizeof(buffer), "start %s %s %s",
