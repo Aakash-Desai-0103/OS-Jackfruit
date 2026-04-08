@@ -52,14 +52,17 @@ int child_func(void *arg) {
 
 pid_t start_container(char *id, char *rootfs) {
     int flags = CLONE_NEWUTS | CLONE_NEWPID | CLONE_NEWNS | SIGCHLD;
-
+    if (container_count >= MAX_CONTAINERS) {
+    printf("Max containers reached\n");
+    return -1;
+}
     pid_t pid = clone(child_func, child_stack + STACK_SIZE, flags, rootfs);
 
     if (pid < 0) {
         perror("clone");
         return -1;
     }
-
+    
     strcpy(containers[container_count].id, id);
     containers[container_count].pid = pid;
     containers[container_count].running = 1;
@@ -100,7 +103,7 @@ int main(int argc, char *argv[]) {
             return 1;
         }
 
-        struct sockaddr_un addr;
+        struct sockaddr_un addr={0};
         addr.sun_family = AF_UNIX;
         strcpy(addr.sun_path, SOCKET_PATH);
 
@@ -119,6 +122,7 @@ int main(int argc, char *argv[]) {
         printf("[Supervisor] Running...\n");
 
         while (1) {
+            while (waitpid(-1, NULL, WNOHANG) > 0);
             int client_fd = accept(server_fd, NULL, NULL);
             if (client_fd < 0) {
                 perror("accept");
@@ -126,7 +130,13 @@ int main(int argc, char *argv[]) {
             }
 
             char buffer[256] = {0};
-            read(client_fd, buffer, sizeof(buffer));
+
+            int n = read(client_fd, buffer, sizeof(buffer) - 1);
+            if (n <= 0) {
+                close(client_fd);
+                continue;
+            }
+            buffer[n] = '\0';
 
             printf("[Supervisor] Received: %s\n", buffer);
 
@@ -157,7 +167,7 @@ int main(int argc, char *argv[]) {
 
         int sock = socket(AF_UNIX, SOCK_STREAM, 0);
 
-        struct sockaddr_un addr;
+        struct sockaddr_un addr={0};
         addr.sun_family = AF_UNIX;
         strcpy(addr.sun_path, SOCKET_PATH);
 
@@ -180,7 +190,7 @@ int main(int argc, char *argv[]) {
 
         int sock = socket(AF_UNIX, SOCK_STREAM, 0);
 
-        struct sockaddr_un addr;
+        struct sockaddr_un addr={0};
         addr.sun_family = AF_UNIX;
         strcpy(addr.sun_path, SOCKET_PATH);
 
