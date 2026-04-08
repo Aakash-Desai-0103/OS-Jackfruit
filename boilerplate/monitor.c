@@ -88,29 +88,34 @@ static void kill_process(const char *container_id,
                          unsigned long limit_bytes,
                          long rss_bytes)
 {
-    struct pid *pid_struct;
-    struct task_struct *task;
+    struct task_struct *task, *child;
 
-    pid_struct = find_get_pid(pid);
-    if (!pid_struct)
+    rcu_read_lock();
+    task = pid_task(find_vpid(pid), PIDTYPE_PID);
+    if (!task) {
+        rcu_read_unlock();
         return;
+    }
 
-    task = get_pid_task(pid_struct, PIDTYPE_PID);
-    put_pid(pid_struct);
-
-    if (!task)
-        return;
+    get_task_struct(task);
+    rcu_read_unlock();
 
     printk(KERN_WARNING
            "[container_monitor] HARD LIMIT container=%s pid=%d rss=%ld limit=%lu\n",
            container_id, pid, rss_bytes, limit_bytes);
 
-    // 🔥 THIS IS THE CRITICAL FIX
-    kill_pid(task_pid(task), SIGKILL, 1);
+    // 🔥 Kill the main process
+    send_sig(SIGKILL, task, 0);
+
+    // 🔥 ALSO kill all children (THIS IS THE REAL FIX)
+    rcu_read_lock();
+    list_for_each_entry(child, &task->children, sibling) {
+        send_sig(SIGKILL, child, 0);
+    }
+    rcu_read_unlock();
 
     put_task_struct(task);
 }
-
 
 // ---------------- TIMER ----------------
 static void timer_callback(struct timer_list *t)
