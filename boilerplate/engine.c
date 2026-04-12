@@ -13,6 +13,7 @@
 #include <time.h>
 #include <pthread.h>
 #include <sys/ioctl.h>
+#include <sys/resource.h>
 
 #include "monitor_ioctl.h"
 
@@ -30,7 +31,12 @@ struct container {
     char state[32];
     time_t start_time;
 
-    int stop_requested;   // 🔥 TASK 4
+    int stop_requested;
+    int client_fd; // Used for blocking 'run' command
+    
+    // Resource tracking for cleanup
+    void *stack_ptr;
+    void *args_ptr;
 };
 
 struct container containers[MAX_CONTAINERS];
@@ -124,17 +130,16 @@ void *consumer(void *arg) {
 struct child_args {
     char rootfs[128];
     int pipefd[2];
-    char *cmd;
+    char cmd[256];
+    int nice_val;
 };
 
 int child_func(void *arg) {
     struct child_args *args = arg;
 
     sethostname("container", 9);
-
     chroot(args->rootfs);
     chdir("/");
-
     mount("proc", "/proc", "proc", 0, NULL);
 
     dup2(args->pipefd[1], STDOUT_FILENO);
@@ -146,6 +151,9 @@ int child_func(void *arg) {
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
 
+    // Apply scheduler nice value
+    setpriority(PRIO_PROCESS, 0, args->nice_val);
+
     execl("/bin/sh", "sh", "-c", args->cmd, NULL);
 
     perror("exec failed");
@@ -153,19 +161,22 @@ int child_func(void *arg) {
 }
 
 // ---------- START ----------
-pid_t start_container(char *id, char *rootfs, char *cmd) {
+pid_t start_container(char *id, char *rootfs, char *cmd, int soft_mib, int hard_mib, int nice_val, int client_fd) {
 
     int pipefd[2];
     pipe(pipefd);
 
     struct child_args *args = malloc(sizeof(struct child_args));
     strcpy(args->rootfs, rootfs);
+    strcpy(args->cmd, cmd);
     args->pipefd[0] = pipefd[0];
     args->pipefd[1] = pipefd[1];
-    args->cmd = strdup(cmd);
+    args->nice_val = nice_val;
+
+    void *stack = malloc(STACK_SIZE);
 
     pid_t pid = clone(child_func,
-                      malloc(STACK_SIZE) + STACK_SIZE,
+                      stack + STACK_SIZE,
                       CLONE_NEWUTS | CLONE_NEWNS | CLONE_NEWPID | SIGCHLD,
                       args);
 
@@ -175,12 +186,10 @@ pid_t start_container(char *id, char *rootfs, char *cmd) {
     int fd = open("/dev/container_monitor", O_RDWR);
     if (fd >= 0) {
         struct monitor_request req;
-
         req.pid = pid;
         strncpy(req.container_id, id, MONITOR_NAME_LEN);
-
-        req.soft_limit_bytes = 50 * 1024 * 1024;
-        req.hard_limit_bytes = 100 * 1024 * 1024;
+        req.soft_limit_bytes = (unsigned long)soft_mib * 1024 * 1024;
+        req.hard_limit_bytes = (unsigned long)hard_mib * 1024 * 1024;
 
         ioctl(fd, MONITOR_REGISTER, &req);
         close(fd);
@@ -200,10 +209,12 @@ pid_t start_container(char *id, char *rootfs, char *cmd) {
     strcpy(containers[container_count].state, "running");
     containers[container_count].start_time = time(NULL);
     containers[container_count].stop_requested = 0;
+    containers[container_count].client_fd = client_fd;
+    containers[container_count].stack_ptr = stack;
+    containers[container_count].args_ptr = args;
 
     container_count++;
-
-    printf("[Supervisor] Started %s (PID: %d)\n", id, pid);
+    printf("[Supervisor] Started %s (PID: %d, Soft: %dMiB, Hard: %dMiB, Nice: %d)\n", id, pid, soft_mib, hard_mib, nice_val);
 
     return pid;
 }
@@ -211,7 +222,7 @@ pid_t start_container(char *id, char *rootfs, char *cmd) {
 // ---------- UPDATE STATES ----------
 void update_state(pid_t pid, int status) {
     for (int i = 0; i < container_count; i++) {
-        if (containers[i].pid == pid) {
+        if (containers[i].pid == pid && strcmp(containers[i].state, "running") == 0) {
 
             if (containers[i].stop_requested) {
                 strcpy(containers[i].state, "stopped");
@@ -231,6 +242,21 @@ void update_state(pid_t pid, int status) {
                 ioctl(fd, MONITOR_UNREGISTER, &req);
                 close(fd);
             }
+
+            // Unblock waiting 'run' client
+            if (containers[i].client_fd != -1) {
+                char resp[64];
+                sprintf(resp, "DONE (Exit code: %d)\n", WEXITSTATUS(status));
+                write(containers[i].client_fd, resp, strlen(resp));
+                close(containers[i].client_fd);
+                containers[i].client_fd = -1;
+            }
+
+            // Cleanup User-Space Heap Memory
+            free(containers[i].stack_ptr);
+            free(containers[i].args_ptr);
+            
+            printf("[Supervisor] Reaped %s (PID: %d) State: %s\n", containers[i].id, pid, containers[i].state);
         }
     }
 }
@@ -238,10 +264,8 @@ void update_state(pid_t pid, int status) {
 // ---------- STOP ----------
 void stop_container(char *id) {
     for (int i = 0; i < container_count; i++) {
-        if (strcmp(containers[i].id, id) == 0) {
-
+        if (strcmp(containers[i].id, id) == 0 && strcmp(containers[i].state, "running") == 0) {
             containers[i].stop_requested = 1;
-
             kill(containers[i].pid, SIGKILL);
         }
     }
@@ -249,7 +273,7 @@ void stop_container(char *id) {
 
 // ---------- PS ----------
 void list_containers(int fd) {
-    char out[1024] = "ID\tPID\tSTATE\tSTART\n";
+    char out[2048] = "ID\tPID\tSTATE\t\tSTART\n";
 
     for (int i = 0; i < container_count; i++) {
         char line[128];
@@ -260,12 +284,12 @@ void list_containers(int fd) {
                 containers[i].start_time);
         strcat(out, line);
     }
-
     write(fd, out, strlen(out));
 }
 
 // ---------- SIGNAL ----------
 void handle_shutdown(int sig) {
+    (void)sig; // Suppress unused warning
     shutdown_flag = 1;
 
     pthread_mutex_lock(&buffer.mutex);
@@ -277,7 +301,6 @@ void handle_shutdown(int sig) {
 
 // ---------- SUPERVISOR ----------
 void run_supervisor() {
-
     signal(SIGINT, handle_shutdown);
 
     buffer.in = buffer.out = buffer.count = 0;
@@ -301,10 +324,10 @@ void run_supervisor() {
     printf("[Supervisor] Running...\n");
 
     while (!shutdown_flag) {
-
         int status;
         pid_t pid;
 
+        // Reap all dead children without blocking
         while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
             update_state(pid, status);
         }
@@ -312,97 +335,102 @@ void run_supervisor() {
         fd_set fds;
         FD_ZERO(&fds);
         FD_SET(server_fd, &fds);
-
-        struct timeval tv = {1, 0};
+        struct timeval tv = {1, 0}; // 1 second timeout
 
         if (select(server_fd + 1, &fds, NULL, NULL, &tv) <= 0)
             continue;
 
         int client_fd = accept(server_fd, NULL, NULL);
-
-        char buf[256] = {0};
+        char buf[1024] = {0};
         read(client_fd, buf, sizeof(buf));
 
-        if (strncmp(buf, "start", 5) == 0) {
-            char id[32], rootfs[128], cmd[256];
-            sscanf(buf, "start %s %s %[^\n]", id, rootfs, cmd);
-            start_container(id, rootfs, cmd);
+        int soft_mib = 40, hard_mib = 64, nice_val = 0;
+
+        // Simple CLI flag extraction
+        char *soft_ptr = strstr(buf, "--soft-mib");
+        if (soft_ptr) sscanf(soft_ptr, "--soft-mib %d", &soft_mib);
+
+        char *hard_ptr = strstr(buf, "--hard-mib");
+        if (hard_ptr) sscanf(hard_ptr, "--hard-mib %d", &hard_mib);
+
+        char *nice_ptr = strstr(buf, "--nice");
+        if (nice_ptr) sscanf(nice_ptr, "--nice %d", &nice_val);
+
+        // Truncate the buffer before the first flag to cleanly extract the command
+        char *first_flag = strstr(buf, "--");
+        if (first_flag) *(first_flag - 1) = '\0';
+
+        char cmd_type[32] = {0}, id[32] = {0}, rootfs[128] = {0}, cmd[256] = {0};
+        sscanf(buf, "%s %s %s %[^\n]", cmd_type, id, rootfs, cmd);
+
+        if (strcmp(cmd_type, "start") == 0) {
+            start_container(id, rootfs, cmd, soft_mib, hard_mib, nice_val, -1);
             write(client_fd, "OK\n", 3);
+            close(client_fd);
         }
-
-        else if (strncmp(buf, "run", 3) == 0) {
-            char id[32], rootfs[128], cmd[256];
-            sscanf(buf, "run %s %s %[^\n]", id, rootfs, cmd);
-
-            pid_t pid = start_container(id, rootfs, cmd);
-
-            int status;
-            waitpid(pid, &status, 0);
-            update_state(pid, status);
-
-            write(client_fd, "DONE\n", 5);
+        else if (strcmp(cmd_type, "run") == 0) {
+            // Pass client_fd directly. DO NOT CLOSE IT YET. update_state will close it.
+            start_container(id, rootfs, cmd, soft_mib, hard_mib, nice_val, client_fd);
         }
-
-        else if (strncmp(buf, "ps", 2) == 0) {
+        else if (strcmp(cmd_type, "ps") == 0) {
             list_containers(client_fd);
+            close(client_fd);
         }
-
-        else if (strncmp(buf, "stop", 4) == 0) {
-            char id[32];
-            sscanf(buf, "stop %s", id);
+        else if (strcmp(cmd_type, "stop") == 0) {
             stop_container(id);
             write(client_fd, "STOPPED\n", 8);
+            close(client_fd);
         }
-
-        else if (strncmp(buf, "logs", 4) == 0) {
-            write(client_fd, "Check <id>.log file\n", 21);
+        else if (strcmp(cmd_type, "logs") == 0) {
+            char log_msg[64];
+            sprintf(log_msg, "Check %s.log file\n", id);
+            write(client_fd, log_msg, strlen(log_msg));
+            close(client_fd);
+        } else {
+            close(client_fd);
         }
-
-        close(client_fd);
     }
-
     pthread_join(cons, NULL);
+    close(server_fd);
+    unlink(SOCKET_PATH);
 }
 
 // ---------- CLIENT ----------
 void run_client(int argc, char *argv[]) {
-
     int sock = socket(AF_UNIX, SOCK_STREAM, 0);
-
     struct sockaddr_un addr = {0};
     addr.sun_family = AF_UNIX;
     strcpy(addr.sun_path, SOCKET_PATH);
 
-    connect(sock, (struct sockaddr *)&addr, sizeof(addr));
+    if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("Connection to supervisor failed");
+        return;
+    }
 
-    char buf[256] = {0};
-
+    char buf[1024] = {0};
     for (int i = 1; i < argc; i++) {
         strcat(buf, argv[i]);
-        strcat(buf, " ");
+        if (i < argc - 1) strcat(buf, " ");
     }
 
     write(sock, buf, strlen(buf));
 
-    char response[1024] = {0};
-    read(sock, response, sizeof(response));
-    printf("%s", response);
+    char response[2048] = {0};
+    int n = read(sock, response, sizeof(response));
+    if (n > 0) printf("%s", response);
 
     close(sock);
 }
 
 // ---------- MAIN ----------
 int main(int argc, char *argv[]) {
-
     if (argc < 2) {
-        printf("Usage:\n");
+        printf("Usage:\nengine supervisor <base-rootfs>\nengine start|run|ps|stop|logs ...\n");
         return 1;
     }
-
     if (strcmp(argv[1], "supervisor") == 0)
         run_supervisor();
     else
         run_client(argc, argv);
-
     return 0;
 }
