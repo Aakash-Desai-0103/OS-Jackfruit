@@ -220,7 +220,11 @@ The bounded buffer prevents uncontrolled memory growth and ensures backpressure 
 
 ### **4. Memory Management and Enforcement**
 
-The kernel module monitors memory usage using RSS (Resident Set Size), which represents the portion of a process’s memory that is currently resident in physical RAM.
+The kernel module monitors memory usage using RSS (Resident Set Size), which represents the portion of a process’s memory that is currently resident in physical RAM
+
+RSS does not include swapped-out memory or untouched virtual address space. It only reflects physically resident pages.
+
+User-space cannot reliably enforce memory limits because processes can allocate memory faster than monitoring intervals. Kernel-space enforcement ensures immediate and authoritative control over process memory usage.
 
 We implement two types of limits:
 
@@ -237,11 +241,14 @@ We conducted experiments using CPU-bound and I/O-bound workloads.
 
 CPU-bound processes consume CPU continuously, while I/O-bound processes frequently yield CPU. Observations show that I/O-bound processes remain responsive, and CPU-bound processes dominate CPU usage.
 
+This behavior aligns with the Completely Fair Scheduler (CFS), which prioritizes interactive (I/O-bound) processes by scheduling them quickly after wake-up while distributing CPU time proportionally among CPU-bound tasks.
+
 This demonstrates:
 
 * Fairness
 * Responsiveness
 * Efficient CPU utilization
+
 
 ---
 
@@ -249,41 +256,41 @@ This demonstrates:
 
 ### **1. Namespace Isolation**
 
-* Choice: clone() + chroot()
-* Tradeoff: weaker than pivot_root()
-* Justification: simpler and sufficient
+* Choice: `clone()` + `chroot()`
+* Tradeoff: `chroot` does not fully isolate filesystem like `pivot_root` (possible escape via descriptors or mount propagation)
+* Justification: significantly simpler to implement while still providing sufficient isolation for project scope
 
 ---
 
 ### **2. Supervisor Architecture**
 
-* Choice: centralized supervisor
-* Tradeoff: single point of failure
-* Justification: easier lifecycle management
+* Choice: centralized supervisor process
+* Tradeoff: introduces a single point of failure
+* Justification: simplifies lifecycle management, metadata tracking, and IPC coordination
 
 ---
 
 ### **3. IPC and Logging**
 
-* Choice: pipes + UNIX sockets
-* Tradeoff: increased complexity
-* Justification: modular and reliable
+* Choice: pipes (logging) + UNIX sockets (control)
+* Tradeoff: increased system complexity due to managing two IPC mechanisms
+* Justification: clean separation of data plane and control plane improves modularity and avoids interference
 
 ---
 
 ### **4. Kernel Monitor**
 
 * Choice: kernel-space monitoring
-* Tradeoff: complex implementation
-* Justification: accurate enforcement
+* Tradeoff: higher implementation complexity and risk compared to user-space
+* Justification: only kernel has accurate, real-time access to process memory (RSS), ensuring reliable enforcement
 
 ---
 
 ### **5. Scheduling Experiments**
 
-* Choice: synthetic workloads
-* Tradeoff: less realistic
-* Justification: clear behavior demonstration
+* Choice: synthetic workloads (`cpu_hog`, `io_pulse`)
+* Tradeoff: may not reflect real-world workloads
+* Justification: provides controlled, predictable behavior for clear demonstration of scheduling principles
 
 ---
 
