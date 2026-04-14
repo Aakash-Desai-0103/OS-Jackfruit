@@ -4,9 +4,11 @@
 
 ## **1. Team Information**
 
-* Aadhavan Muthusamy - SRN:PES1UG24CS002
+* Aadhavan Muthusamy - SRN: PES1UG24CS002
+( **dev** in past commits -> **updated** to -> **paya5am** ( latest three commits ) )
+ 
 * Aakash Desai - SRN: PES1UG24CS006
-
+( **Aakash-Desai-0103** )
 ---
 
 ## **2. Build, Load, and Run Instructions**
