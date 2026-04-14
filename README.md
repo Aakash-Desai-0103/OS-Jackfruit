@@ -121,49 +121,49 @@ sudo rmmod monitor
 
 ### 1. Multi-container supervision
 
-![SS1](Screen_Shots/ss1_supervisor.png)
+![SS1](Screenshots/AakashsScreenshots/ss1_supervisor.png)
 *Multiple containers running under a single supervisor process.*
 
 ---
 
 ### 2. Metadata tracking
 
-![SS2](Screen_Shots/ss2_ps.png)
+![SS2](Screenshots/AakashsScreenshots/ss2_ps.png)
 *Output of `engine ps` showing container metadata.*
 
 ---
 
 ### 3. Bounded-buffer logging
 
-![SS3](Screen_Shots/ss3_logging.png)
+![SS3](Screenshots/AakashsScreenshots/ss3_logging.png)
 *Logs captured from multiple containers via pipes and written to log files.*
 
 ---
 
 ### 4. CLI and IPC
 
-![SS4](Screen_Shots/ss4_cli.png)
+![SS4](Screenshots/AakashsScreenshots/ss4_cli.png)
 *CLI command issued and response received from supervisor demonstrating IPC.*
 
 ---
 
 ### 5. Soft-limit warning
 
-![SS5](Screen_Shots/ss5_soft_limit.png)
+![SS5](Screenshots/AakashsScreenshots/ss5_soft_limit.png)
 *Kernel log showing soft memory limit warning.(Followed by Hard-Limit Escalation)*
 
 ---
 
 ### 6. Hard-limit enforcement
 
-![SS6](Screen_Shots/ss6_hard_limit.png)
+![SS6](Screenshots/AakashsScreenshots/ss6_hard_limit.png)
 *Kernel log and metadata showing container killed after exceeding hard limit.*
 
 ---
 
 ### 7. Scheduling experiment
 
-![SS7](Screen_Shots/ss7_scheduling.png)
+![SS7](Screenshots/AakashsScreenshots/ss7_scheduling.png)
 
 *CPU-bound vs I/O-bound workloads showing different CPU usage behavior.*
 
@@ -171,7 +171,7 @@ sudo rmmod monitor
 
 ### 8. Clean teardown
 
-![SS8](Screen_Shots/ss8_cleanup.png)
+![SS8](Screenshots/AakashsScreenshots/ss8_cleanup.png)
 
 *No zombie processes after shutdown.*
 
@@ -310,7 +310,7 @@ System behavior was observed using the `top` command.
 
 ### Observed Output
 
-![Scheduling Experiment](Screen_Shots/ss7_scheduling.png)
+![Scheduling Experiment](Screenshots/AakashsScreenshots/ss7_scheduling.png)
 
 The following behavior was observed during execution:
 
