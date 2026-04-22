@@ -13,120 +13,67 @@
 
 ## **2. Build, Load, and Run Instructions**
 
-### 🔧 Build
+### Clone Repo
 
 ```bash
-make
+git clone https://github.com/paya5am/OS-Jackfruit-PES1UG24CS002
+cd OS-Jackfruit-PES1UG24CS002
+cd boilerplate
+```
+
+### Clean and Build
+
+```bash
+make clean
+make all module
 ```
 
 ---
 
-### 🔌 Load Kernel Module
+### Allocate Permissions and Load Monitor
 
 ```bash
+sudo rmmod monitor 2>/dev/null
 sudo insmod monitor.ko
+sudo chmod 666 /dev/container_monitor 
 ```
 
 ---
-
-### ✅ Verify Device
+### Copy Workloads Into Containers
 
 ```bash
-ls -l /dev/container_monitor
+cp memory_hog cpu_hog ../rootfs-alpha/
+cp cpu_hog ../rootfs-beta/
 ```
 
 ---
-
-### 🚀 Start Supervisor
-
-```bash
-sudo ./engine supervisor ./rootfs-base
-```
-
----
-
-### 📁 Create Writable Root Filesystems
-
-```bash
-cp -a ./rootfs-base ./rootfs-alpha
-cp -a ./rootfs-base ./rootfs-beta
-```
-
----
-
-### ▶️ Start Containers
-
-```bash
-sudo ./engine start alpha ./rootfs-alpha /bin/sh --soft-mib 48 --hard-mib 80
-sudo ./engine start beta ./rootfs-beta /bin/sh --soft-mib 64 --hard-mib 96
-```
-
----
-
-### 📊 List Containers
-
-```bash
-sudo ./engine ps
-```
-
----
-
-### 📜 View Logs
-
-```bash
-sudo ./engine logs alpha
-```
-
----
-
-### 🧪 Run Workloads
-
-```bash
-cp cpu_hog ./rootfs-alpha/
-cp io_pulse ./rootfs-beta/
-cp memory_hog ./rootfs-alpha/
-
-sudo ./engine start cpu ./rootfs-alpha ./cpu_hog
-sudo ./engine start io ./rootfs-beta ./io_pulse
-```
-
----
-
-### 🛑 Stop Containers
-
-```bash
-sudo ./engine stop alpha
-sudo ./engine stop beta
-```
-
----
-
-### 📟 Inspect Kernel Logs
-
-```bash
-dmesg | tail
-```
-
----
-
-### ❌ Unload Module
-
-```bash
-sudo rmmod monitor
-```
-
----
-
 ## **3. Demo with Screenshots**
 
 ### 1. Multi-container supervision
+---
+```bash
+sudo ./engine supervisor ./rootfs-base
+```
+---
 
 ![SS1](Screenshots/AakashsScreenshots/ss1_supervisor.png)
 *Multiple containers running under a single supervisor process.*
 
 ---
+### Test ( Terminal 2 ) 
+
+```bash
+sudo ./engine start bg-test ../rootfs-alpha "sleep 60"
+sudo ./engine run fg-test ../rootfs-beta "sleep 10"
+```
+
+---
 
 ### 2. Metadata tracking
+
+```bash
+sudo ./engine ps
+```
 
 ![SS2](Screenshots/AakashsScreenshots/ss2_ps.png)
 *Output of `engine ps` showing container metadata.*
@@ -135,12 +82,22 @@ sudo rmmod monitor
 
 ### 3. Bounded-buffer logging
 
+```bash
+sudo ./engine start cont1 ../rootfs-alpha "echo 'line1'; sleep 1; echo 'line2'"
+sleep 2
+cat cont1.log
+```
+
 ![SS3](Screenshots/AakashsScreenshots/ss3_logging.png)
 *Logs captured from multiple containers via pipes and written to log files.*
 
 ---
 
 ### 4. CLI and IPC
+
+```bash
+sudo ./engine start ipc ../rootfs-alpha "sleep 60"
+```
 
 ![SS4](Screenshots/AakashsScreenshots/ss4_cli.png)
 *CLI command issued and response received from supervisor demonstrating IPC.*
@@ -149,12 +106,32 @@ sudo rmmod monitor
 
 ### 5. Soft-limit warning
 
+```bash
+sudo ./engine start mem-test ../rootfs-alpha "/memory_hog 150" --soft-mib 20 --hard-mib 50/
+```
+
+```bash
+#wait 5 secs and run in another terminal
+sudo ./engine ps
+sudo dmesg | tail -n 10
+```
+
 ![SS5](Screenshots/AakashsScreenshots/ss5_soft_limit.png)
 *Kernel log showing soft memory limit warning.(Followed by Hard-Limit Escalation)*
 
 ---
 
 ### 6. Hard-limit enforcement
+
+```bash
+sudo ./engine start mem-test ../rootfs-alpha "/memory_hog 150" --soft-mib 20 --hard-mib 50/
+```
+
+```bash
+#wait 5 secs and run in another terminal
+sudo ./engine ps
+sudo dmesg | tail -n 10
+```
 
 ![SS6](Screenshots/AakashsScreenshots/ss6_hard_limit.png)
 *Kernel log and metadata showing container killed after exceeding hard limit.*
@@ -163,6 +140,12 @@ sudo rmmod monitor
 
 ### 7. Scheduling experiment
 
+```bash
+sudo ./engine start cpu-high ../rootfs-alpha "/cpu_hog" --nice -10
+sudo ./engine start io_based ../rootfs-beta "/io_pulse"
+top
+```
+
 ![SS7](Screenshots/AakashsScreenshots/ss7_scheduling.png)
 
 *CPU-bound vs I/O-bound workloads showing different CPU usage behavior.*
@@ -170,6 +153,12 @@ sudo rmmod monitor
 ---
 
 ### 8. Clean teardown
+
+```bash
+#Ctrl+C in the supervisor terminal ( terminal 1 )
+sudo rmmod monitor
+sudo dmesg | tail -n 2
+```
 
 ![SS8](Screenshots/AakashsScreenshots/ss8_cleanup.png)
 
