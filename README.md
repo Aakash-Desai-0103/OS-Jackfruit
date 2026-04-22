@@ -16,8 +16,8 @@
 ### Clone Repo
 
 ```bash
-git clone https://github.com/paya5am/OS-Jackfruit-PES1UG24CS002
-cd OS-Jackfruit-PES1UG24CS002
+git clone https://github.com/Aakash-Desai-0103/OS-Jackfruit
+cd OS-Jackfruit
 cd boilerplate
 ```
 
